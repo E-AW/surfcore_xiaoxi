@@ -22,7 +22,10 @@ test('reserved2 YAML resolves to the expected persona and template variables', (
 
 test('local/admin tool restrictions and existing compaction budgets stay intact', () => {
   assert.deepEqual(preset.map((row) => row.id), [
-    'persona', 'tool-web', 'tool-ask-user', 'tool-todo', 'qq-tool-restrict', 'compaction',
+    // tool-fs / tool-bash 是「挂上但藏起来」的本地工具：默认被 qq-tool-restrict
+    // 在注册期 restrict、执行期 guard 拒绝；只有 socialV2.localTools=true 才可见。
+    'persona', 'tool-web', 'tool-ask-user', 'tool-todo', 'tool-fs', 'tool-bash',
+    'qq-tool-restrict', 'compaction',
   ]);
   assert.deepEqual(preset.find((row) => row.id === 'tool-web').config, { search: false, fetch: false });
   assert.equal(preset.find((row) => row.id === 'qq-tool-restrict').name, './qq-tool-restrict.mjs');

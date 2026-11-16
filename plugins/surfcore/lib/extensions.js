@@ -52,7 +52,30 @@ export class ExtensionHost {
     this.log = log;
     this.active = new Map(); // id -> { manifest, disposers, routes, module }
     this.listeners = new Map();
+    // 宿主把「把一帧塞进会话」的能力挂在这里；没挂时扩展拿到的 injectMedia 只会如实返回未接入。
+    this.mediaInjector = null;
     this.state = this.readState();
+  }
+
+  /**
+   * 宿主接线点：fn(payload) => Promise<{ ok, reason?, sessionId? }>
+   * payload = { extensionId, mediaType, data(base64), name, text, key? }
+   */
+  setMediaInjector(fn) {
+    this.mediaInjector = typeof fn === 'function' ? fn : null;
+    return this.mediaInjector !== null;
+  }
+
+  async injectMedia(extensionId, payload) {
+    if (typeof this.mediaInjector !== 'function') {
+      return { ok: false, reason: '宿主还没有接线（setMediaInjector 未调用）' };
+    }
+    try {
+      const result = await this.mediaInjector({ extensionId, ...(payload || {}) });
+      return result && typeof result === 'object' ? { ...result } : { ok: Boolean(result) };
+    } catch (error) {
+      return { ok: false, reason: `注入失败：${error?.message ?? error}` };
+    }
   }
 
   readState() {
@@ -214,6 +237,7 @@ export class ExtensionHost {
         return dispose;
       },
       emit: (event, payload) => this.emit(event, payload),
+      injectMedia: (payload) => this.injectMedia(manifest.id, payload),
       memory: this.memory,
       align: this.align,
       bridge: this.bridge,

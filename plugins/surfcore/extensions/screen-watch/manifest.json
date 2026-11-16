@@ -1,0 +1,12 @@
+{
+  "id": "screen-watch",
+  "name": "看屏幕（截屏喂进同一份记忆）",
+  "version": "0.1.0",
+  "description": "把屏幕画面当输入源，和 QQ 聊天平级：帧落到 dataDir，并通过宿主注入面进同一份记忆/工作区。默认关闭，需在扩展页手动打开。",
+  "entry": "index.js",
+  "enabled": false,
+  "capabilities": ["actions", "memory.read"],
+  "platforms": [],
+  "author": "local",
+  "requiresRestart": true
+}

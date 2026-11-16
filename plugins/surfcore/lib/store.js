@@ -442,6 +442,9 @@ export function normalizeQqConfig(input) {
 
   if (isPlainObject(cfg.socialV2)) {
     cfg.socialV2.initialPromptMaxChars = finiteNumber(cfg.socialV2.initialPromptMaxChars, 2000, 100, 8000, { integer: true });
+    // 本地工具开关：默认关（保持「仿真会话没有本地工具」这条硬边界）。
+    // 打开后 qq-tool-restrict 不再装 restrict/guard，preset 里的 fs/bash 就能用。
+    cfg.socialV2.localTools = cfg.socialV2.localTools === true;
     if (isPlainObject(cfg.socialV2.media)) {
       cfg.socialV2.media.maxBytes = finiteNumber(cfg.socialV2.media.maxBytes, 8 * 1024 * 1024, 1024 * 1024, 64 * 1024 * 1024, { integer: true });
       cfg.socialV2.media.maxPixels = finiteNumber(cfg.socialV2.media.maxPixels, 64_000_000, 1_000_000, 256_000_000, { integer: true });

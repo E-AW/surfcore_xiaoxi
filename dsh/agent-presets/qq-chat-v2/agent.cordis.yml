@@ -161,12 +161,28 @@
   config:
     allowParallelInProgress: true
 
+# ── 本地工具（默认不可见） ──────────────────────────────────────────────────
+# 这两行只在 socialV2.localTools=true 时才会真正出现在模型的工具清单里：
+#   · false（默认）→ qq-tool-restrict 在注册期把它们 restrict 掉、执行期 guard 拒绝；
+#   · true        → qq-tool-restrict 整体不装，两行生效，模型能读写文件、执行命令。
+# 为什么挂在 preset 里而不是按开关动态挂：Loader YAML 没有运行时条件，
+# 但「挂上但藏起来」正好是铁律 L7 的原口径——工具存在，模型看不见也用不了。
+
+- id: tool-fs
+  name: '@deepseek-ai/dsh-tool-fs'
+
+- id: tool-bash
+  name: '@deepseek-ai/dsh-tool-bash'
+
 # ── QQ 安全硬边界 ────────────────────────────────────────────────────────────
 # 隐藏开发/管理工具，并在执行期用白名单拒绝任何越权工具调用。
 
 - id: qq-tool-restrict
   name: ./qq-tool-restrict.mjs
-  config: {}
+  config:
+    # 只有这一个 preset 认「允许本地工具」开关（socialV2.localTools）。
+    # 封闭模式的 qq-chat 不声明它，L7 在那边保持无条件生效。
+    honorLocalToolsSwitch: true
 
 # ── 上下文管理（保留，避免长聊爆上下文） ────────────────────────────────────
 

@@ -22,6 +22,10 @@
 //    `tools.guard` 只能拒绝**执行**，工具名仍会出现在模型的 schema 里——
 //    那既不满足"仿真会话不得拥有本地执行能力"的注册期要求，也会诱导模型去调它。
 //    所以本地工具必须同时出现在下面的 restrict 名单里。
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+
 export const name = 'qq-tool-restrict'
 
 export const inject = ['tools']
@@ -185,7 +189,27 @@ const SAFE_EXACT = new Set([
 export const SAFE_EXACT_TOOLS = Object.freeze([...SAFE_EXACT])
 export const SAFE_TOOL_PREFIXES = Object.freeze([...SAFE_PREFIXES])
 
-export function apply(ctx) {
+// 配置开关：socialV2.localTools === true 时，本模块整体不装（见 apply 开头）。
+// 直接读配置文件而不是走 ctx 服务 —— 本模块在 preset 装载期执行，此时宿主设置服务未必就绪。
+function localToolsEnabled() {
+  try {
+    const home = process.env.DSH_HOME || path.join(os.homedir(), '.dsh')
+    const cfg = JSON.parse(fs.readFileSync(path.join(home, 'surfcore', 'config.json'), 'utf8'))
+    return cfg?.socialV2?.localTools === true
+  } catch {
+    return false
+  }
+}
+
+export function apply(ctx, config = {}) {
+  // 只有显式声明了 honorLocalToolsSwitch 的 preset（= 二代仿真的 qq-chat-v2）才认这个开关。
+  // 封闭模式的 qq-chat 刻意不声明：它的 L7 是硬边界，不能因为仿真那边开了开关而被一起放行。
+  if (config?.honorLocalToolsSwitch === true && localToolsEnabled()) {
+    // 用户显式打开了「允许本地工具」：不再隐藏/拦截读写与执行类工具。
+    // 只打一行，避免启动日志被淹。
+    console.error('[qq-tool-restrict] socialV2.localTools=true → 本 preset 不装工具限制（读写文件/执行命令可用）；改回 false 并重启 DSH 即恢复硬边界')
+    return
+  }
   // 1) 把已知危险全局工具从 schema 隐藏（restrict 只影响继承的全局层，
   //    不会误删 preset 自己注册的 scoped 工具）。
   // 逐个 restrict：当前 DSH 版本不存在的工具名会单独抛错并跳过，

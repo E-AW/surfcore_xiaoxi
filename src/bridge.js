@@ -17,6 +17,8 @@ import { GEN1_ROLE_LINE_RE, parseRoleSections, roleCharStats, roleSectionReport,
 import { fileURLToPath } from 'node:url';
 import { SnowLumaWebSocketClient, text } from '@snowluma/sdk';
 import { NodeApiClient, unwrap, createTurnCollector, discoverDshLaunchToken } from './dsh-client.js';
+import { keepMedia, mediaLabel } from './media-keep.js';
+import { resolveSendableFile, pickUploadAction, buildUploadParams } from './file-send.js';
 import { mdToPlain, splitForQQ, truncateText, truncateTextTail } from './md-to-plain.js';
 import { SENSITIVE_RE, SECRET_TOKEN_RE } from './sensitive.js';
 import { looksLikeUnfinished, selectWaitBatch } from './v2-wait.js';
@@ -1001,6 +1003,7 @@ function loadConfig() {
         getImages: true,
         getForwardMsg: true,
         sendPoke: true,
+        sendFile: true,
         listStickers: true,
         getStickerImage: true,
         sendSticker: true,
@@ -1161,6 +1164,7 @@ function loadConfig() {
     getImages: true,
     getForwardMsg: true,
     sendPoke: true,
+    sendFile: true,
     listStickers: true,
     getStickerImage: true,
     sendSticker: true,
@@ -1653,8 +1657,18 @@ async function segmentsToText(segments, options = {}) {
       case 'mface': out.push(`[表情${d.summary ? `:${d.summary}` : ''}]`); break;
       case 'image': out.push('[图片]'); break;
       case 'record': out.push('[语音]'); break;
-      case 'video': out.push('[视频]'); break;
-      case 'file': out.push(`[文件${d.name ?? ''}]`); break;
+      // 视频/文件的链接带 rkey，过期就再也取不回来（实测 41 分钟前的图片已 400，
+      // get_video 在网关上不存在）。所以到达这一秒就顺手落盘，失败也只影响文案。
+      case 'video': {
+        const kept = await keepMedia(d.url ?? d.file, { name: d.name });
+        out.push(mediaLabel('video', kept));
+        break;
+      }
+      case 'file': {
+        const kept = await keepMedia(d.url ?? d.file, { name: d.name });
+        out.push(mediaLabel('file', kept, d.name ?? ''));
+        break;
+      }
       case 'reply': {
         // 引用/回复段：默认解析成「被引用人 + 原文」，让 AI 能判断这句话是对谁说的；
         // includeReply=false 时跳过该段，得到“当前消息自己的文字”（用于指令/指向性判断）。
@@ -3136,6 +3150,12 @@ async function main() {
     const now = new Date();
     const timeLine = `【当前时间】${now.toLocaleString('zh-CN', { hour12: false })}（${Intl.DateTimeFormat().resolvedOptions().timeZone}）`;
     const parts = [timeLine];
+    // 本地工具开关（socialV2.localTools）：preset 的人设文字里写着「你没有本地工具」，
+    // 开了开关却不说一声，模型会照着那句旧规则自我设限、一次都不调用工具。
+    // 这里补一段覆盖声明 —— 它是运行时注入，改开关后下一轮就生效，不用动 preset 文件。
+    if (cfg.socialV2?.localTools === true) {
+      parts.push('【本地工具已开启（管理员设置，覆盖人设里那句「你没有本地工具」）】本会话挂了 dsh-tool-fs / dsh-tool-bash 等工具：可以读写文件、执行命令、跑脚本。仍然守住三条：不碰主人的账号与凭据（cookie/token/密码）、不把本机路径与系统信息发给群里的人、破坏性操作（删除、覆盖、装软件）先说一声再做。')
+    }
     if (cfg.slang?.enabled !== false) {
       const block = buildSlangContext(slangEntries, cfg.slang?.injectMax ?? 8);
       if (block) parts.push(block);
@@ -7252,6 +7272,62 @@ async function main() {
             if (st.sendTimes.length > 500) st.sendTimes = st.sendTimes.slice(-500);
             log(`[reserved2] 工具拍一拍失败 ${key}:`, error?.message ?? error);
             sendJson({ ok: false, error: `拍一拍失败：${error?.message ?? error}` }, error?.statusCode ?? 500);
+          }
+          return;
+        }
+        // ── 文件/视频发送（reserved2） ────────────────────────────────────
+        // 只发本地已存在的文件，路径必须落在允许的根目录内（默认用户主目录）。
+        // QQ 里显示为「文件」气泡，mp4 点开即可播放；不是视频卡片。
+        if (req.method === 'POST' && url.pathname === '/api/socialV2/send-file') {
+          const body = await readBody();
+          const key = String(body.key ?? '').trim();
+          if (!key) { sendJson({ ok: false, error: 'key 不能为空' }, 400); return; }
+          if (currentMode !== 'reserved2') { sendJson({ ok: false, error: '该接口仅 reserved2 模式可用' }, 403); return; }
+          if (!req.headers['x-agent-token']) { sendJson({ ok: false, error: 'reserved2 模式发送文件必须携带 agent token' }, 403); return; }
+          if (!agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
+          if (!v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
+          if (!v2ToolEnabled('sendFile')) { sendJson({ ok: false, error: '工具未启用：qq_send_file' }, 403); return; }
+          if (socialV2.paused) { sendJson({ ok: false, error: '二代 AI 已暂停，不能发送文件' }, 403); return; }
+          const keyMatch = /^(group|private):(\d+)$/.exec(key);
+          if (!keyMatch) { sendJson({ ok: false, error: 'key 格式应为 group:群号 或 private:QQ号' }, 400); return; }
+          const kind = keyMatch[1];
+          const id = Number(keyMatch[2]);
+          if (!Number.isFinite(id) || id <= 0 || !modeAllowed(key, kind, id, cfg, currentMode)) {
+            sendJson({ ok: false, error: '当前模式不允许操作该会话' }, 403);
+            return;
+          }
+          if (shouldBlockSilentReply(key)) { sendJson({ ok: false, error: '静默模式已开启，当前不允许发文件' }, 403); return; }
+          const resolved = resolveSendableFile(cfg, body.path);
+          if (!resolved.ok) { sendJson({ ok: false, error: resolved.error }, 400); return; }
+          const st = getSocialV2State(key);
+          const sendCfg = cfg.socialV2?.send ?? {};
+          const now = Date.now();
+          const rateLimit = sendRateLimitInfo(key, st, sendCfg, 1);
+          if (rateLimit) { reportLimitEvent(key, rateLimit); sendJson(rateLimit, 429); return; }
+          st.sendTimes.push(now);
+          if (st.sendTimes.length > 500) st.sendTimes = st.sendTimes.slice(-500);
+          try {
+            const action = pickUploadAction(kind);
+            const params = buildUploadParams(kind, id, resolved.path, body.name);
+            await bot.raw(action, params);
+            st.lastActionAt = now;
+            const label = `[文件] 我发了 ${params.name}`;
+            st.recentMessages.push({
+              messageId: null, sender: '我', text: label, plain: label, tail: label,
+              kind: 'file', quoteTargetIsSelf: false, isOwner: true, ownerLabel: '我', isSelf: true,
+              media: [], hasMedia: false, forwardIds: [], hasForward: false, time: Date.now()
+            });
+            const recentLimit = Number(cfg.socialV2?.context?.recentLimit) || 100;
+            if (st.recentMessages.length > recentLimit) st.recentMessages.splice(0, st.recentMessages.length - recentLimit);
+            saveSocialV2State();
+            log(`[reserved2] 工具发文件 ${key} ${resolved.path} (${(resolved.size / 1024 / 1024).toFixed(2)}MB)`);
+            appendActivity(`${key} [reserved2] 工具发文件 ${params.name}`);
+            sendJson({ ok: true, key, kind, action, name: params.name, size: resolved.size });
+          } catch (error) {
+            const idx = st.sendTimes.indexOf(now);
+            if (idx >= 0) st.sendTimes.splice(idx, 1);
+            log(`[reserved2] 工具发文件失败 ${key}:`, error?.message ?? error);
+            sendJson({ ok: false, error: `发文件失败：${error?.message ?? error}` }, error?.statusCode ?? 500);
           }
           return;
         }

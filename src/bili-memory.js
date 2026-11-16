@@ -237,9 +237,14 @@ export function createBiliMemory({ stateDir, home = os.homedir(), biliDir = null
     for (const bv of bvs) {
       if (!BV_RE.test(bv)) continue;
       if (!force && items[bv]?.title) continue;
-      if (!force && items[bv]?.failedAt && Date.now() - Date.parse(items[bv].failedAt) < 6 * 60 * 60 * 1000) continue;
-      if (fetched >= 40) break;
-      const info = await fetchVideoInfo(bv, { home });
+      if (!force && items[bv]?.failedAt && Date.now() - Date.parse(items[bv].failedAt) < 20 * 60 * 1000) continue;
+      if (fetched >= 12) break;
+      let info = await fetchVideoInfo(bv, { home });
+      // 失败重试一次：批量拉取时 B 站容易返回风控码，隔一秒再试通常就过
+      if (!info.ok || !info.title) {
+        await sleep(1200 + Math.floor(Math.random() * 900));
+        info = await fetchVideoInfo(bv, { home });
+      }
       if (info.ok && info.title) {
         items[bv] = {
           title: info.title,
@@ -253,10 +258,11 @@ export function createBiliMemory({ stateDir, home = os.homedir(), biliDir = null
         };
         changed = true;
         fetched += 1;
-        await sleep(260);
+        await sleep(700 + Math.floor(Math.random() * 400));
       } else {
-        // 失败也记一下，避免每轮都打同一条
-        items[bv] = items[bv] ?? { title: '', failedAt: new Date().toISOString() };
+        // 失败也记一下并落盘，避免每轮都拿同一批去撞风控
+        items[bv] = { ...(items[bv] ?? {}), title: '', failedAt: new Date().toISOString() };
+        changed = true;
       }
     }
     if (changed) {
@@ -797,6 +803,49 @@ export function createBiliMemory({ stateDir, home = os.homedir(), biliDir = null
     try { atomicWriteText(paths.history, JSON.stringify(data, null, 2) + '\n'); } catch {}
   }
 
+  /**
+   * 分享前补标题：pickShareCard 只读索引缓存，新片刚进来时会拿到
+   * 「（未取到标题的视频）」。这里在发出去之前现拉一次，并把结果写回
+   * 标题缓存与索引，下一次就不用再拉。
+   */
+  async function ensureCardTitle(card) {
+    if (!card) return card;
+    const bv = String(card.bvid ?? '').trim();
+    const title = String(card.title ?? '').trim();
+    const missing = !title || title.includes('未取到标题');
+    if (!missing || !BV_RE.test(bv)) return card;
+    let hit = null;
+    try {
+      const items = await ensureTitles([bv], { force: true });
+      hit = items?.[bv] ?? null;
+    } catch {
+      return card;
+    }
+    if (!hit?.title) return card;
+    try {
+      const index = readIndex();
+      if (index && Array.isArray(index.entries)) {
+        let touched = false;
+        for (const e of index.entries) {
+          if (String(e.bvid ?? '') !== bv) continue;
+          if (e.title && !String(e.title).includes('未取到标题')) continue;
+          e.title = redactOwner(hit.title);
+          if (hit.owner) e.owner = redactOwner(hit.owner);
+          if (hit.pic) e.pic = hit.pic;
+          touched = true;
+        }
+        if (touched) atomicWriteText(paths.index, JSON.stringify(index, null, 2) + '\n');
+      }
+    } catch {}
+    return {
+      ...card,
+      title: redactOwner(hit.title),
+      owner: hit.owner ? redactOwner(hit.owner) : card.owner,
+      pic: hit.pic || card.pic,
+      url: card.url || `https://www.bilibili.com/video/${bv}`,
+    };
+  }
+
   function pickShareCard({ slotIndex = 0, dateKey = new Date().toLocaleDateString('sv-SE'), historyDays = 6, allowReuse = false } = {}) {
     const index = readIndex();
     if (!index || !Array.isArray(index.entries)) return null;
@@ -866,6 +915,7 @@ export function createBiliMemory({ stateDir, home = os.homedir(), biliDir = null
     briefBlock,
     recallBlock,
     pickShareCard,
+    ensureCardTitle,
     recordShare,
     lastSlot,
     status,

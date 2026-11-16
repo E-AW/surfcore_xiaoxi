@@ -126,8 +126,16 @@ export function mintBrowserSessionCookie(baseUrl, secret, { lifetimeMs = MINTED_
     version: COOKIE_PAYLOAD_VERSION, authority, issuedAt, expiresAt
   }), 'utf8'));
   const signature = base64url(createHmac('sha256', secret).update(body).digest());
-  const name = COOKIE_PREFIX + base64url(createHash('sha256').update(authority).digest());
-  return `${name}=v1.${body}.${signature}`;
+  // Cookie 名的哈希口径有两套，取决于 DSH 侧被谁改过：
+  //   · 原版：name = sha256(authority)，authority 含端口（127.0.0.1:63568）
+  //   · 被 dsh-purge 补丁打过：cookieName() 先 `.replace(/:[0-9]+$/u,'')` 去掉端口再哈希，
+  //     见 dsh-client-connection/lib/index.js 的 `/* [dsh-purge] cookie-name-ignore-port */`
+  // 两种名字都发一份，服务端只读它自己要的那个；payload.authority 两套口径都要求含端口
+  // （authenticate(): `payload.authority !== authority` 直接比较 Host 头）。
+  const value = `v1.${body}.${signature}`;
+  const nameOf = (auth) => COOKIE_PREFIX + base64url(createHash('sha256').update(auth).digest());
+  const names = [...new Set([authority, authority.replace(/:[0-9]+$/, '')])];
+  return names.map((a) => `${nameOf(a)}=${value}`).join('; ');
 }
 
 /**

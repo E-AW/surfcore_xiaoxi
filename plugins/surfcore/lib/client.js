@@ -1148,6 +1148,7 @@ F("sessionCwd", "会话工作目录", "留空用 surfcore 根目录", "text", { 
         F("socialV2.autoReplyCheckMs", "自动回复检查间隔（ms）", "", "number"),
         F("socialV2.agentPreset", "二代 preset", "默认 qq-chat-v2"),
         F("socialV2.provideRecommendations", "提供推荐值", "", "switch"),
+        F("socialV2.localTools", "允许本地工具", "开启后这个 preset 不再摘掉读写文件/执行命令类工具（qq-tool-restrict 只在 false 时生效）；改完要重启 DSH 才生效，二代仿真的收发与唤醒行为不变", "switch"),
         F("socialV2.initialPromptMaxChars", "初始提示词上限（字符）", "100~8000", "number", { min: 100, max: 8000 }),
       ]},
       { group: "鱼群判定关键词（QQ）", note: "开头 / 中间 / 结尾任一命中即算鱼；默认 肥鱼 + 结尾 fish/鱼；群名关键词只收紧鱼窝阈值，不把人算鱼", fields: [
@@ -1310,7 +1311,7 @@ F("sessionCwd", "会话工作目录", "留空用 surfcore 根目录", "text", { 
       sendGroup: "发群消息", sendPrivate: "发私聊", reply: "引用回复", sendBurst: "分条发送",
       sendMessage: "统一发送", waitMessages: "等消息", feedback: "反馈", getMyRecent: "看我最近",
       getMessageDetail: "消息详情", getActiveMembers: "活跃成员", setWakeConfig: "设置唤醒",
-      markRead: "标记已读", closeConversation: "对话收尾", memory: "轻量记忆", slangQuery: "查黑话", slangSubmit: "提交黑话",      getImages: "看图", getForwardMsg: "看合并转发", sendPoke: "拍一拍", listStickers: "表情列表",
+      markRead: "标记已读", closeConversation: "对话收尾", memory: "轻量记忆", slangQuery: "查黑话", slangSubmit: "提交黑话",      getImages: "看图", getForwardMsg: "看合并转发", sendPoke: "拍一拍", sendFile: "发文件", listStickers: "表情列表",
       getStickerImage: "表情图片", sendSticker: "发表情", setStickerRemark: "改表情备注",
       stickerNote: "表情笔记", collectSticker: "收藏表情", getSelfImage: "看自己形象", sendVoice: "发语音",
     };

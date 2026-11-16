@@ -341,6 +341,7 @@ const TOOL_CONFIG_FLAGS = {
   // token 才改注册期过滤的），又诱导模型误调。`qq_set_sticker_remark` 默认就是 `false`
   // （见 bridge.js 的 socialV2.tools 默认表），所以此前它一直是"默认关闭却仍然可见"。
   qq_send_poke: 'sendPoke',
+  qq_send_file: 'sendFile',
   qq_get_message_images: 'getImages',
   qq_get_forward_msg: 'getForwardMsg',
   qq_list_stickers: 'listStickers',
@@ -841,6 +842,32 @@ if (cfg.socialV2?.tools?.sendPoke !== false) {
         return { content: [{ type: 'text', text: serializeModelData(data) }] };
       } catch (error) {
         return { content: [{ type: 'text', text: `拍一拍失败：${error?.message ?? error}` }], isError: true };
+      }
+    }
+  );
+}
+
+if (cfg.socialV2?.tools?.sendFile !== false) {
+  server.tool(
+    'qq_send_file',
+    '把本机的一个文件（含视频）通过 QQ 发给对方：私聊走 upload_private_file、群聊走 upload_group_file，收到的是「文件」气泡（mp4 点开即可播放），不是视频卡片。只能发已存在、且落在允许目录（默认用户主目录，可配 socialV2.file.allowedRoots）内的普通文件，默认上限 200MB。reserved2 下必须携带会话令牌 token。',
+    {
+      key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
+      token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）'),
+      path: z.string().describe('本机文件绝对路径（必须在允许目录内）'),
+      name: z.string().optional().describe('对方看到的文件名，默认用原文件名')
+    },
+    async ({ key, token, path: filePath, name }) => {
+      try {
+        const data = await agentApi('/api/socialV2/send-file', {
+          method: 'POST',
+          body: JSON.stringify({ key, path: filePath, name: name ?? '' }),
+          headers: { 'x-agent-token': token },
+          timeoutMs: 120000
+        });
+        return { content: [{ type: 'text', text: serializeModelData(data) }] };
+      } catch (error) {
+        return { content: [{ type: 'text', text: `发文件失败：${error?.message ?? error}` }], isError: true };
       }
     }
   );

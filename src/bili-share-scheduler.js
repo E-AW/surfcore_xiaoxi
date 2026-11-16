@@ -187,7 +187,15 @@ export function createBiliShareScheduler({
     running = true;
     try {
       const slotIndex = Math.max(0, slotIndexOf(timeLabel));
-      const card = memory.pickShareCard({ slotIndex, dateKey: dk });
+      let card = memory.pickShareCard({ slotIndex, dateKey: dk });
+      // 新片刚进索引时标题还是占位符，发之前现补一次，补不到再照占位发。
+      if (card && typeof memory.ensureCardTitle === 'function') {
+        try {
+          card = await memory.ensureCardTitle(card);
+        } catch (error) {
+          log(`[B站分享] 补标题失败：${error?.message ?? error}`);
+        }
+      }
       if (!card) {
         log('[B站分享] 没有新鲜素材（可分享的都已在 6 天内发过），本次跳过；不发旧的');
         return { ok: false, why: '没有新鲜素材' };
