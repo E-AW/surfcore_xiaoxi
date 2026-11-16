@@ -66,6 +66,7 @@ import { PlatformRegistry } from './platforms.js';
 import { ExtensionHost } from './extensions.js';
 import { isLoopbackReq, json, readBody, sameOrigin } from './http-guard.js';
 import { startScheduler } from './scheduler.js';
+import { createScreenWatchInjector } from './screen-watch-host.js';
 import { createTokenBudgetService } from './token-budget.js';
 import { scanPluginCompatibility } from './compat.js';
 import { createGateEventStore } from '../../../src/gate-events.js';
@@ -217,6 +218,25 @@ export function apply(ctx) {
     },
     log: pluginLog,
   });
+
+  // ── screen-watch：把扩展递进来的画面送进 DSH 的一轮会话 ────────────────────
+  // 走 sessionController.prompt 的 content parts（text + image），不经 QQ、不经 SnowLuma，
+  // 跟 QQ 聊天是同一条路——只是会话不同。没接线时扩展那边会如实返回「宿主未接线」。
+  try {
+    const watchCharacter = readCurrentCharacter();
+    extensionHost.setMediaInjector(
+      createScreenWatchInjector({
+        ctx,
+        dshHome: DSH_HOME,
+        characterId: watchCharacter?.id ? String(watchCharacter.id) : '',
+        workspaceDir: path.join(DSH_HOME, 'surfcore', 'state', 'agents'),
+        agentPreset: '',
+        log: pluginLog,
+      }),
+    );
+  } catch (error) {
+    pluginLog(`[screen-watch] 接线失败：${String(error?.message ?? error)}`);
+  }
 
   let scheduler = null;
   let schedulerStatus = { running: false, startedAt: null, lastError: null, lastTickAt: null };
